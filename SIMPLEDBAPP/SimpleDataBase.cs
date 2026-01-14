@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography.X509Certificates;
 namespace SimpleDataBase 
 {
     public class SimpleDatabase 
@@ -17,15 +18,17 @@ namespace SimpleDataBase
         private Dictionary<string, long> _index;
         //the file backing the database
         private  FileStream _file ; 
-
+        //The lock must be a field of the database class, shared by all operations.
+        //is used for compaction 
+        private readonly ReaderWriterLockSlim rws = new ReaderWriterLockSlim();
         //constructor
-
+        private string _dbPath;
         public SimpleDatabase(string Path)
         {
             _index = new Dictionary<string, long>();
             
             _file = new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
-
+            _dbPath = Path;
             LoadIndex();
         }
         private void LoadIndex()
@@ -40,7 +43,7 @@ namespace SimpleDataBase
                 int ValueLen = ReadInt32(_file);
                 byte Flags = ReadByte(_file);
 
-                string key = ReadString(KeyLen);
+                string key = ReadString(_file, KeyLen);
 
                 if(Flags == 1) //deleted
                 {
@@ -60,80 +63,109 @@ namespace SimpleDataBase
         //db requests
         
         //get
-        public string Get(string key)
+        public string? Get(string key)
         {
+            rws.EnterReadLock();
             if(!_index.TryGetValue(key, out long offset))
             {
-                return "this entry doesn't exist!";
+                return null;
             }
             _file.Seek(offset, SeekOrigin.Begin);
             int keyLen = ReadInt32(_file);
             int valueLen = ReadInt32(_file);
             ReadByte(_file); // flags
-            ReadString(keyLen);
-            return ReadString(valueLen);
+            ReadString(_file, keyLen);
+            rws.ExitReadLock();
+            return ReadString(_file, valueLen);
+            
         }
         //put(updates that keys offset with a new variable)
         public void Put(string key, string value)
         {
+            rws.EnterReadLock();
             long offset = _file.Seek(0, SeekOrigin.End);
             //writes the record header
-            WriteInt32(key.Length);
-            WriteInt32(value.Length);
-            WriteByte(0); // 0 = active record
+            WriteInt32(_file, key.Length);
+            WriteInt32(_file, value.Length);
+            WriteByte(_file, 0); // 0 = active record
             
             //writes the recorded data
-            WriteString(key);
-            WriteString(value);
+            WriteString(_file, key);
+            WriteString(_file,value);
             //enmsures data is writen to the disk
             _file.Flush();
             //updates in-memory index 
             _index[key] = offset;
+            rws.ExitReadLock();
         }
 
         //delete
         public void Delete(string key)
         {
+            rws.EnterReadLock();
             //long offset = _file.Seek(0, SeekOrigin.End); can be ommited as we dont need the offset for delete
             // but can be used later for a restore function
             _file.Seek(0, SeekOrigin.End);
-            WriteInt32(key.Length);
-            WriteInt32(0);
-            WriteByte(1); // deletes the information
-            WriteString(key);
+            WriteInt32(_file, key.Length);
+            WriteInt32(_file, 0);
+            WriteByte(_file, 1); // deletes the information
+            WriteString(_file,key);
 
             _file.Flush();
             _index.Remove(key);
+            rws.ExitReadLock();
         }
 
+        
+        
         //compacter(removes deleted entries from the db file basically tombstones)
-        public void compacter(string Path)
+        public void Compact()
         {
-            FileStream _oldFile;
-            FileStream _tempFile;
-            Dictionary<string, long> _Newindex;
-            ReaderWriterLock rwl = new ReaderWriterLock();
-            rwl.AcquireReaderLock(1);// this is to stop changing the file while stuff is copying over
-            FileStream oldPath = _file; // saves the old path of the old db
-            string tempPath = _file + ".compact"; //creates a new temporary path 
             
-            
-            _oldFile = new FileStream(Path, FileMode.Open, FileAccess.ReadWrite); // this is done to store the old file, in prep to move stuff over 
-            _tempFile =  new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite); // this is done to create a temp file 
-            _Newindex = new Dictionary<string, long>(); // making the new index for the new offset to store the new database
-            LoadIndex(); //this creates a fresh index for the compacted file
-
-            //now heres where we copy over the 'live records' the stuff with stuff in them
-            foreach (KeyValuePair<string, long> key in _index)  //KeyValuePair<int,string> item in dictionaryobject
+            // Stop writes (shared lock defined at class level)
+            rws.EnterWriteLock();
+            var newIndex = new Dictionary<string, long>();
+            string tempPath = _dbPath + ".compact"; //creates a new temporary path 
+            //store old path
+            using (var oldFile = new FileStream(_dbPath, FileMode.Open, FileAccess.Read))
+            //set up new path
+            using (var tempFile = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
             {
-                _oldFile.Seek(0, SeekOrigin.End);
-                //read record header from old file
-                int keyLen = ReadInt32(_oldFile);
-                int valueLen = ReadInt32(_oldFile);
-                int flags = ReadByte(_oldFile);
+            //now heres where we copy over the 'live records' the stuff with stuff in them
+                foreach (KeyValuePair<string, long> key in _index)  //KeyValuePair<int,string> item in dictionaryobject
+                {
+                    oldFile.Seek(key.Value, SeekOrigin.Begin);
+                    //read record header from old file
+                    int keyLen = ReadInt32(oldFile);
+                    int valueLen = ReadInt32(oldFile);
+                    ReadByte(oldFile);
+                    //now its time to read the keys and values of the bytes
+                    string oldKey = ReadString(oldFile, keyLen);
+                    string value = ReadString(oldFile, valueLen);
+
+                    //appends to the new file
+                    long newOffSet = tempFile.Position;
+
+                    WriteInt32(tempFile, keyLen);
+                    WriteInt32(tempFile, valueLen);
+                    
+                    WriteByte(tempFile, 0); // 0 = active record
+                    WriteString(tempFile, oldKey);
+                    WriteString(tempFile, value);
+
+                    //now its time to update the new index into the compacted file
+                    newIndex[oldKey] = newOffSet; 
+                }
             }
 
-
+            //replaces old file with new compacted file
+            _file.Close();
+            File.Replace(tempPath, _dbPath, null); //atomic operation definintion: it happens or it doesnt
+            
+            _file = new FileStream(_dbPath, FileMode.Open, FileAccess.ReadWrite);
+            _index = newIndex;
+            //now we can leave the write mode
+            rws.ExitWriteLock();
         }
         
         
@@ -148,18 +180,18 @@ namespace SimpleDataBase
             file.ReadExactly(buf);
             return BitConverter.ToInt32(buf, 0);
         }
-        
-        private void WriteInt32(int value)//converts int to 4 bytes and advances file pointer by 4 bytes
+
+        private void WriteInt32(FileStream file, int value)//converts int to 4 bytes and advances file pointer by 4 bytes
         {
             //Every integer is written as exactly 4 bytes, in the same byte order.
             byte[] bytes = BitConverter.GetBytes(value);
-            _file.Write(bytes, 0, 4);
+            file.Write(bytes, 0, 4);
         }
 
 
-        private void WriteByte(byte value)//this writes exactly one byte
+        private void WriteByte(FileStream file, byte value)//this writes exactly one byte
         {
-            _file.WriteByte(value);
+            file.WriteByte(value);
         }
 
         private byte ReadByte(FileStream file)//this reads exactly one byte
@@ -167,16 +199,16 @@ namespace SimpleDataBase
             return (byte)file.ReadByte();
         }
 
-        private void WriteString(string value)// Converts string -> UTF-8 bytes and moves the file pointer forward
+        private void WriteString(FileStream file, string value)// Converts string -> UTF-8 bytes and moves the file pointer forward
         {
             byte[] buf = Encoding.UTF8.GetBytes(value);
-            _file.Write(buf, 0, buf.Length);
+            file.Write(buf, 0, buf.Length);
         }
 
-        private string ReadString(int length) // Reads length bytes then converts bytes using UTF8 to a string
+        private string ReadString(FileStream file,int length) // Reads length bytes then converts bytes using UTF8 to a string
         {
             byte[] buf = new byte[length];
-            _file.ReadExactly(buf);
+            file.ReadExactly(buf);
             return Encoding.UTF8.GetString(buf);
         }
     }
