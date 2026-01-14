@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.IO;
 using System.Text;
-
+using System.Threading;
+using System.Data.Common;
+using System.Runtime.CompilerServices;
 namespace SimpleDataBase 
 {
     public class SimpleDatabase 
@@ -34,9 +36,9 @@ namespace SimpleDataBase
                 long recordOffset = _file.Position;
                  
                 // Read record header
-                int KeyLen = ReadInt32();
-                int ValueLen = ReadInt32();
-                byte Flags = ReadByte();
+                int KeyLen = ReadInt32(_file);
+                int ValueLen = ReadInt32(_file);
+                byte Flags = ReadByte(_file);
 
                 string key = ReadString(KeyLen);
 
@@ -65,9 +67,9 @@ namespace SimpleDataBase
                 return "this entry doesn't exist!";
             }
             _file.Seek(offset, SeekOrigin.Begin);
-            int keyLen = ReadInt32();
-            int valueLen = ReadInt32();
-            ReadByte(); // flags
+            int keyLen = ReadInt32(_file);
+            int valueLen = ReadInt32(_file);
+            ReadByte(_file); // flags
             ReadString(keyLen);
             return ReadString(valueLen);
         }
@@ -104,7 +106,35 @@ namespace SimpleDataBase
             _index.Remove(key);
         }
 
-        
+        //compacter(removes deleted entries from the db file basically tombstones)
+        public void compacter(string Path)
+        {
+            FileStream _oldFile;
+            FileStream _tempFile;
+            Dictionary<string, long> _Newindex;
+            ReaderWriterLock rwl = new ReaderWriterLock();
+            rwl.AcquireReaderLock(1);// this is to stop changing the file while stuff is copying over
+            FileStream oldPath = _file; // saves the old path of the old db
+            string tempPath = _file + ".compact"; //creates a new temporary path 
+            
+            
+            _oldFile = new FileStream(Path, FileMode.Open, FileAccess.ReadWrite); // this is done to store the old file, in prep to move stuff over 
+            _tempFile =  new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite); // this is done to create a temp file 
+            _Newindex = new Dictionary<string, long>(); // making the new index for the new offset to store the new database
+            LoadIndex(); //this creates a fresh index for the compacted file
+
+            //now heres where we copy over the 'live records' the stuff with stuff in them
+            foreach (KeyValuePair<string, long> key in _index)  //KeyValuePair<int,string> item in dictionaryobject
+            {
+                _oldFile.Seek(0, SeekOrigin.End);
+                //read record header from old file
+                int keyLen = ReadInt32(_oldFile);
+                int valueLen = ReadInt32(_oldFile);
+                int flags = ReadByte(_oldFile);
+            }
+
+
+        }
         
         
         
@@ -112,10 +142,10 @@ namespace SimpleDataBase
         //helpers
         //Every byte written must be read back in the exact same order, size, and encoding.
         //otherwise risk a corrupted db
-        private int ReadInt32()// reads 4 bytes then converts to a int then advances the file pointer by 4 bytes
+        private int ReadInt32(FileStream file)// reads 4 bytes then converts to a int then advances the file pointer by 4 bytes
         {
             byte[] buf = new byte[4];
-            _file.ReadExactly(buf);
+            file.ReadExactly(buf);
             return BitConverter.ToInt32(buf, 0);
         }
         
@@ -132,9 +162,9 @@ namespace SimpleDataBase
             _file.WriteByte(value);
         }
 
-        private byte ReadByte()//this reads exactly one byte
+        private byte ReadByte(FileStream file)//this reads exactly one byte
         {
-            return (byte)_file.ReadByte();
+            return (byte)file.ReadByte();
         }
 
         private void WriteString(string value)// Converts string -> UTF-8 bytes and moves the file pointer forward
