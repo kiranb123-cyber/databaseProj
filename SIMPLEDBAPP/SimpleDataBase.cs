@@ -196,7 +196,12 @@ namespace SimpleDataBase
 
         private byte ReadByte(FileStream file)//this reads exactly one byte
         {
-            return (byte)file.ReadByte();
+            int b = file.ReadByte();
+            if(b == -1)
+            {
+                throw new EndOfStreamException();
+            }
+            return (byte)b;
         }
 
         private void WriteString(FileStream file, string value)// Converts string -> UTF-8 bytes and moves the file pointer forward
