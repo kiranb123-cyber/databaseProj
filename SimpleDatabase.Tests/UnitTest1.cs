@@ -13,6 +13,9 @@ using System.Reflection;
 using System.Runtime;
 using Microsoft.VisualBasic;
 using System.ComponentModel.DataAnnotations;
+using System.Threading.Tasks.Dataflow;
+using System.Configuration.Assemblies;
+using System.Reflection.Metadata;
 
 namespace UnitTest1.Tests;
 
@@ -77,9 +80,17 @@ public class DatabaseBasicTests
 
         }
         File.Delete(path);
-        
     }
-
-      
+    
+    [Fact]
+    public void StringPath_TooLong()
+    {
+        string path = NewTempPath();
+        using (var db = new SimpleDatabase(path)) 
+        {
+            Assert.Throws<StringException>(() => db.Put("name", "The old clock tower stood as a silent sentinel over the forgotten town of Oakhaven. Its gears, rusted and long since ceased moving, held the final moments of July 1957 captive in time. Elara, a curious young girl with a spirit as vibrant as the wildflowers that now carpeted the cobblestone streets, believed the clock's silence was a riddle waiting to be solved. Legend said a powerful secret was locked within its mechanisms, a secret only a pure heart could uncover. On a stormy evening, driven by an unyielding desire to breathe life back into her quiet home, Elara began her ascent up the precarious, winding staircase. Each creaking step echoed her determination, a small whisper in the face of time's powerful stillness."));
+        }
+        File.Delete(path);
+    }
 }
 
