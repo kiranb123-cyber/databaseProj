@@ -123,6 +123,23 @@ public class DatabaseBasicTests
         }
         File.Delete(path);
     }
+    [Fact]
+    public void UpdateAppendWorksJustLikeAStackTest()
+    {
+        string path = NewTempPath();
+        using (var db = new SimpleDatabase(path))
+        {
+            //gave name and age
+            db.Put("name", "kiran");
+            db.Put("age", "200");
+            //but since this is like a stack for now this should update name and put it back on top of the stack and update 
+            //its value to 200
+            db.Put("name", "200");
+            Assert.Equal("200", db.Get("name"));
+        }
+        File.Delete(path);
+    }
+
     
     
 }
