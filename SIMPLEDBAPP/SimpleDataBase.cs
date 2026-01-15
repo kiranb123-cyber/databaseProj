@@ -8,10 +8,13 @@ using System.Threading;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography.X509Certificates;
+using System.ComponentModel.DataAnnotations;
 namespace SimpleDataBase 
 {
-    public class SimpleDatabase 
+    public class SimpleDatabase : IDisposable
+
     {
+        private StringException StringTooLongException = new StringException("Thats too long of a string, max length is 255 characters");
         // its the indexing for the database, not the actual db
         //points to the offset
         //the offset is where the data lives 
@@ -25,11 +28,14 @@ namespace SimpleDataBase
         private string _dbPath;
         public SimpleDatabase(string Path)
         {
+
+
             _index = new Dictionary<string, long>();
-            
+                
             _file = new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
             _dbPath = Path;
             LoadIndex();
+
         }
         private void LoadIndex()
         {
@@ -87,26 +93,32 @@ namespace SimpleDataBase
         //put(updates that keys offset with a new variable)
         public void Put(string key, string value)
         {
-            rws.EnterWriteLock();
-            try
+            if(key.Length > 255 || value.Length > 255)
             {
-                long offset = _file.Seek(0, SeekOrigin.End);
-                //writes the record header
-                WriteInt32(_file, key.Length);
-                WriteInt32(_file, value.Length);
-                WriteByte(_file, 0); // 0 = active record
-                
-                //writes the recorded data
-                WriteString(_file, key);
-                WriteString(_file,value);
-                //enmsures data is writen to the disk
-                _file.Flush();
-                //updates in-memory index 
-                _index[key] = offset;
+                throw StringTooLongException;
             }
-            finally
-            {
-                rws.ExitWriteLock();
+            else{
+                rws.EnterWriteLock();
+                try
+                {
+                    long offset = _file.Seek(0, SeekOrigin.End);
+                    //writes the record header
+                    WriteInt32(_file, key.Length);
+                    WriteInt32(_file, value.Length);
+                    WriteByte(_file, 0); // 0 = active record
+                    
+                    //writes the recorded data
+                    WriteString(_file, key);
+                    WriteString(_file,value);
+                    //enmsures data is writen to the disk
+                    _file.Flush();
+                    //updates in-memory index 
+                    _index[key] = offset;
+                }
+                finally
+                {
+                    rws.ExitWriteLock();
+                }
             }
         }
 
@@ -239,6 +251,11 @@ namespace SimpleDataBase
             byte[] buf = new byte[length];
             file.ReadExactly(buf);
             return Encoding.UTF8.GetString(buf);
+        }
+        public void Dispose()//this will help in tests to shut down the db inbetween tests
+        {
+            _file?.Dispose();
+            _file = null!;
         }
     }
 

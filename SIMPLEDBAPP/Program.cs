@@ -13,7 +13,7 @@ class Program
         Console.WriteLine($"2: {db.Get("name") ?? "<null>"}");
         db.Compact();
         Console.WriteLine($"3: {db.Get("name") ?? "<null>"}");
-        db.Put("name", "Bob");  
+        db.Put("name", "Bob");   
         Console.WriteLine($"3: {db.Get("name") ?? "<null>"}");
 
     }
