@@ -16,6 +16,13 @@ using System.ComponentModel.DataAnnotations;
 using System.Threading.Tasks.Dataflow;
 using System.Configuration.Assemblies;
 using System.Reflection.Metadata;
+using System.Diagnostics;
+using System.Reflection.PortableExecutable;
+using System.Linq.Expressions;
+using System.Reflection.Metadata.Ecma335;
+using System.Net;
+using System.Xml;
+using System.Net.NetworkInformation;
 
 namespace UnitTest1.Tests;
 
@@ -33,7 +40,7 @@ public class DatabaseBasicTests
 
 
     [Fact]
-    public void DoPutThenDoGetReturnsValue()
+    public void DoPutThenDoGetReturnsValueTest()
     {
         string path = NewTempPath();
         using (var db = new SimpleDatabase(path))
@@ -44,7 +51,7 @@ public class DatabaseBasicTests
         File.Delete(path);
     }
     [Fact]
-    public void Delete_RemovesKey()
+    public void Delete_RemovesKeyTest()
     {
         string path = NewTempPath();
         using (var db = new SimpleDatabase(path))
@@ -59,7 +66,7 @@ public class DatabaseBasicTests
     }
     
     [Fact]
-    public void DataPersistsAcrossRestart()
+    public void DataPersistsAcrossRestartTest()
     {
         
         string path = NewTempPath();
@@ -83,7 +90,7 @@ public class DatabaseBasicTests
     }
     
     [Fact]
-    public void StringPath_TooLong()
+    public void StringPath_TooLongExceptionTest()
     {
         string path = NewTempPath();
         using (var db = new SimpleDatabase(path)) 
@@ -92,5 +99,31 @@ public class DatabaseBasicTests
         }
         File.Delete(path);
     }
+    [Fact]
+    public void Compact_RemovesDeletedRecordsTest()
+    {
+        string path = NewTempPath();
+        using (var db = new SimpleDatabase(path))
+        {
+            db.Put("name", "kiran");
+            db.Put("age", "200");
+            db.Delete("name");
+            
+            //going to check and see how large the file is before deletion
+            long sizeBefore = new FileInfo(path).Length;
+            db.Compact();
+            long sizeAfter = new FileInfo(path).Length;
+            bool IsSizeSmaller = false;
+            if(sizeBefore > sizeAfter)
+            {
+                IsSizeSmaller = true;
+            }
+            Assert.True(IsSizeSmaller);
+            
+        }
+        File.Delete(path);
+    }
+    
+    
 }
 
