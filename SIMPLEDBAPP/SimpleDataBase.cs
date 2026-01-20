@@ -18,7 +18,7 @@ namespace SimpleDataBase
         // its the indexing for the database, not the actual db
         //points to the offset
         //the offset is where the data lives 
-        private Dictionary<string, long> _index;
+        private IIndex<string, long> _index;
         //the file backing the database
         private  FileStream _file ; 
         //The lock must be a field of the database class, shared by all operations.
@@ -30,12 +30,43 @@ namespace SimpleDataBase
         {
 
 
-            _index = new Dictionary<string, long>();
+            _index = new HashIndex<string, long>();
                 
             _file = new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
             _dbPath = Path;
             LoadIndex();
 
+        }
+        
+        
+        //index abstraction just simply maps keys to offsets(their values live in the file at these offsets)
+        public interface IIndex<TKey, TValue>
+        {
+            bool TryGet(TKey key, out TValue value);
+            void Upsert(TKey key, TValue value);
+            bool Remove(TKey key);
+
+            // Ordered scan (HashIndex will just return unordered)
+            IEnumerable<KeyValuePair<TKey, TValue>> Scan();
+        }
+        
+        //wraps dictionary in a hash index
+        public sealed class HashIndex<TKey, TValue> : IIndex<TKey, TValue>
+            where TKey : notnull
+        {
+            private readonly Dictionary<TKey, TValue> _dict = new();
+
+            public bool TryGet(TKey key, out TValue value)
+                => _dict.TryGetValue(key, out value);
+
+            public void Upsert(TKey key, TValue value)
+                => _dict[key] = value;
+
+            public bool Remove(TKey key)
+                => _dict.Remove(key);
+
+            public IEnumerable<KeyValuePair<TKey, TValue>> Scan()
+                => _dict;
         }
         private void LoadIndex()
         {
@@ -59,7 +90,7 @@ namespace SimpleDataBase
                 }
                 else
                 {
-                    _index[key] = recordOffset;
+                    _index.Upsert(key, recordOffset);
                     _file.Seek(ValueLen, SeekOrigin.Current);
                 }
 
@@ -74,7 +105,7 @@ namespace SimpleDataBase
             rws.EnterReadLock();
             try
             {
-                if(!_index.TryGetValue(key, out long offset))
+                if(!_index.TryGet(key, out long offset))
                 {
                     return null;
                 }
@@ -113,7 +144,7 @@ namespace SimpleDataBase
                     //enmsures data is writen to the disk
                     _file.Flush();
                     //updates in-memory index 
-                    _index[key] = offset;
+                    _index.Upsert(key, offset);
                 }
                 finally
                 {
@@ -155,7 +186,7 @@ namespace SimpleDataBase
             rws.EnterWriteLock();
             try
             {
-                var newIndex = new Dictionary<string, long>();
+                IIndex<string, long> newIndex = new HashIndex<string, long>();
                 string tempPath = _dbPath + ".compact"; //creates a new temporary path 
                 //store old path
                 _file.Seek(0, SeekOrigin.Begin);
@@ -164,7 +195,7 @@ namespace SimpleDataBase
                 using (var tempFile = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
                 {
                 //now heres where we copy over the 'live records' the stuff with stuff in them
-                    foreach (KeyValuePair<string, long> key in _index)  //KeyValuePair<int,string> item in dictionaryobject
+                    foreach (KeyValuePair<string, long> key in _index.Scan())  //KeyValuePair<int,string> item in dictionaryobject
                     {
                         oldFile.Seek(key.Value, SeekOrigin.Begin);
                         //read record header from old file
@@ -186,7 +217,7 @@ namespace SimpleDataBase
                         WriteString(tempFile, value);
 
                         //now its time to update the new index into the compacted file
-                        newIndex[oldKey] = newOffSet; 
+                        newIndex.Upsert(oldKey, newOffSet); 
                     }
                 }
 
@@ -204,7 +235,7 @@ namespace SimpleDataBase
             }
         }
         
-        
+
         
         
         //helpers
@@ -257,6 +288,8 @@ namespace SimpleDataBase
             _file?.Dispose();
             _file = null!;
         }
+
+
     }
 
 }
