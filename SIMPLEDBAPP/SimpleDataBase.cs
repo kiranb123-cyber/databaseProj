@@ -4,16 +4,18 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.IO;
 using System.Text;
+using SimpleDbIndexes;
 using System.Threading;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography.X509Certificates;
 using System.ComponentModel.DataAnnotations;
-namespace SimpleDataBase 
+namespace Simpledb 
 {
     public class SimpleDatabase : IDisposable
 
     {
+        
         private StringException StringTooLongException = new StringException("Thats too long of a string, max length is 255 characters");
         // its the indexing for the database, not the actual db
         //points to the offset
@@ -39,35 +41,9 @@ namespace SimpleDataBase
         }
         
         
-        //index abstraction just simply maps keys to offsets(their values live in the file at these offsets)
-        public interface IIndex<TKey, TValue>
-        {
-            bool TryGet(TKey key, out TValue value);
-            void Upsert(TKey key, TValue value);
-            bool Remove(TKey key);
 
-            // Ordered scan (HashIndex will just return unordered)
-            IEnumerable<KeyValuePair<TKey, TValue>> Scan();
-        }
         
-        //wraps dictionary in a hash index
-        public sealed class HashIndex<TKey, TValue> : IIndex<TKey, TValue>
-            where TKey : notnull
-        {
-            private readonly Dictionary<TKey, TValue> _dict = new();
 
-            public bool TryGet(TKey key, out TValue value)
-                => _dict.TryGetValue(key, out value);
-
-            public void Upsert(TKey key, TValue value)
-                => _dict[key] = value;
-
-            public bool Remove(TKey key)
-                => _dict.Remove(key);
-
-            public IEnumerable<KeyValuePair<TKey, TValue>> Scan()
-                => _dict;
-        }
         private void LoadIndex()
         {
             _file.Seek(0, SeekOrigin.Begin);
